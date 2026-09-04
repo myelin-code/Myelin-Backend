@@ -399,10 +399,17 @@ def _apply_endgame_investment(
     A no-op unless Q4 is actually open with a signed Path A deal behind it -- everywhere else
     `state.pending_investment` stays the dataclass default of zero.
     """
-    if state.quarter != TOTAL_QUARTERS or run.endgame_path != "A" or len(history) < CRISIS_QUARTER:
+    # Only apply to Q4 and only if enough history exists to build the term sheet
+    if state.quarter != TOTAL_QUARTERS or len(history) < CRISIS_QUARTER:
         return state
-    ts = build_term_sheet(history[:CRISIS_QUARTER], history[CRISIS_QUARTER - 1].next_state)
-    return replace(state, pending_investment=ts.offer("A").investment)
+    
+    # If Path A is already officially selected, apply it
+    if run.endgame_path == "A":
+        ts = build_term_sheet(history[:CRISIS_QUARTER], history[CRISIS_QUARTER - 1].next_state)
+        return replace(state, pending_investment=ts.offer("A").investment)
+    
+    # Path not selected yet, but return state unchanged (investment will be 0)
+    return state
 
 
 async def lock(session: AsyncSession, company: Company, payload: dict) -> dict:

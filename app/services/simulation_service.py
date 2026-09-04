@@ -258,12 +258,31 @@ def budget(state: SimulationCompanyState, result: SimulationQuarterResult | None
     repay = allocations.get("repay") * _LAKH
     drawn = result.drawn if result else Decimal(0)
     fixed = (result.salaries + result.overhead) if result else (salary_bill(state.staff) + state.overhead)
+    
+    # For budget breakdown display
+    cash_available = state.cash
+    investment_available = state.pending_investment
+    credit_available = drawn
+    total_funds = cash_available + investment_available + credit_available
+    ceiling = max(Decimal(0), total_funds - fixed - BUFFER)
 
     return {
-        "opex": opex, "capex": capex, "inno": inno, "people": people, "repay": repay, "drawn": drawn,
+        "opex": opex, 
+        "capex": capex, 
+        "inno": inno, 
+        "people": people, 
+        "repay": repay, 
+        "drawn": drawn,
         "investment": state.pending_investment,
         "committed": opex + capex + inno + people + repay,
-        "ceiling": max(Decimal(0), state.cash + state.pending_investment + drawn - fixed - BUFFER),
+        "ceiling": ceiling,
+        # Breakdown for UI display
+        "cash_available": cash_available,
+        "investment_available": investment_available,
+        "credit_available": credit_available,
+        "total_funds": total_funds,
+        "fixed_costs": fixed,
+        "buffer": BUFFER,
     }
 
 

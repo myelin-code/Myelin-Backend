@@ -51,10 +51,35 @@ async def register(
     except SupabaseAuthError as exc:
         # Rate limiting is the one signup rejection that isn't about the input itself.
         if exc.status_code == 429:
-            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, exc.message) from exc
-        # Everything else Supabase's signup endpoint rejects (bad email, weak password,
-        # already-registered, ...) is a malformed/rejected request, not a server failure.
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.message) from exc
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Too many signup attempts. Please wait a minute and try again. Already have an account? Try logging in instead.",
+            ) from exc
+        
+        # Provide specific, actionable error messages for common signup issues
+        error_message = exc.message.lower() if exc.message else ""
+        if "already registered" in error_message or "user already registered" in error_message or "already exists" in error_message:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "This email is already registered. Log in instead, or use a different email address.",
+            ) from exc
+        elif "password" in error_message and ("weak" in error_message or "short" in error_message or "at least" in error_message):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Password is too weak. Please use at least 8 characters with a mix of letters and numbers.",
+            ) from exc
+        elif "email" in error_message and ("invalid" in error_message or "format" in error_message):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Please enter a valid email address.",
+            ) from exc
+        else:
+            # Everything else Supabase's signup endpoint rejects (bad email, weak password,
+            # already-registered, ...) is a malformed/rejected request, not a server failure.
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                exc.message or "Unable to create account. Please check your information and try again.",
+            ) from exc
     return AuthResponse(**result)
 
 
@@ -76,11 +101,32 @@ async def login(
         result = await client.sign_in(email=payload.email, password=payload.password)
     except SupabaseAuthError as exc:
         if exc.status_code == 429:
-            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, exc.message) from exc
-        # Any other rejection (wrong password, unknown email, unconfirmed email, ...) means
-        # this request didn't authenticate -- the same envelope `get_current_user` uses for a
-        # missing/invalid Bearer token, so the frontend's one 401 handler catches both.
-        raise NotAuthenticatedError(exc.message) from exc
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Too many login attempts. Please wait a moment and try again.",
+            ) from exc
+        # Provide user-friendly error messages for common authentication failures
+        error_message = exc.message.lower() if exc.message else ""
+        if "invalid" in error_message and ("credentials" in error_message or "login" in error_message or "email or password" in error_message):
+            # Wrong email or password - don't reveal which one
+            raise NotAuthenticatedError(
+                "Incorrect email or password. Please check your credentials and try again."
+            ) from exc
+        elif "not found" in error_message or "user not found" in error_message or "email not confirmed" in error_message:
+            # Account doesn't exist or not confirmed
+            raise NotAuthenticatedError(
+                "No account found with this email. New here? Create an account to get started."
+            ) from exc
+        elif "email not confirmed" in error_message or "confirmation" in error_message:
+            # Email confirmation pending
+            raise NotAuthenticatedError(
+                "Please verify your email address before logging in. Check your inbox for the confirmation link."
+            ) from exc
+        else:
+            # Generic fallback with helpful context
+            raise NotAuthenticatedError(
+                exc.message or "Unable to log in. Please check your email and password, or create an account if you're new."
+            ) from exc
     return AuthResponse(**result)
 
 
@@ -103,11 +149,16 @@ async def refresh(
         result = await client.refresh_session(refresh_token=payload.refresh_token)
     except SupabaseAuthError as exc:
         if exc.status_code == 429:
-            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, exc.message) from exc
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Too many requests. Please wait a moment before trying again.",
+            ) from exc
         # A refresh token Supabase will not trade is indistinguishable, to the client, from
         # having no session at all -- same 401 envelope as `/login` and `get_current_user`,
         # so the frontend's one 401 handler is all that is needed to send them to login.
-        raise NotAuthenticatedError(exc.message) from exc
+        raise NotAuthenticatedError(
+            "Your session has expired. Please log in again to continue."
+        ) from exc
     return AuthResponse(**result)
 
 
@@ -142,14 +193,20 @@ async def forgot_password(
         logger.error("Refused to send a password-reset email. %s", exc.detail)
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "Password resets are misconfigured on this deployment, so the emailed link would "
-            "not work. No email was sent -- please contact support.",
+            "Password reset is temporarily unavailable. Please contact support or try again later.",
         ) from exc
     except SupabaseAuthError as exc:
         if exc.status_code == 429:
-            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, exc.message) from exc
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.message) from exc
-    return {"message": "If that email is registered, a reset link has been sent."}
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Too many password reset attempts. Please wait an hour before trying again.",
+            ) from exc
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            exc.message or "Unable to process password reset request. Please try again.",
+        ) from exc
+    return {"message": "If that email is registered, a password reset link has been sent. Check your inbox (and spam folder)."}
+
 
 
 @router.post(
@@ -169,5 +226,19 @@ async def reset_password(
             access_token=payload.access_token, new_password=payload.new_password
         )
     except SupabaseAuthError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.message) from exc
-    return {"message": "Password updated."}
+        error_message = exc.message.lower() if exc.message else ""
+        if "expired" in error_message or "invalid" in error_message:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "This password reset link has expired or is invalid. Please request a new one.",
+            ) from exc
+        elif "password" in error_message and ("weak" in error_message or "short" in error_message):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Password is too weak. Please use at least 8 characters with a mix of letters and numbers.",
+            ) from exc
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            exc.message or "Unable to reset password. Please try again or request a new reset link.",
+        ) from exc
+    return {"message": "Password updated successfully. You can now log in with your new password."}

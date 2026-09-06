@@ -149,7 +149,7 @@ def _result_hash(result_json: dict[str, Any], run_status: RunStatus, score_hash_
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _to_allocations(row: QuarterAllocation | None) -> QuarterAllocations:
+def to_allocations(row: QuarterAllocation | None) -> QuarterAllocations:
     if row is None:
         return QuarterAllocations()
     return QuarterAllocations(**{field: getattr(row, field) for field in _ALLOCATION_FIELDS})
@@ -173,10 +173,10 @@ async def _prior_allocations(session: AsyncSession, quarter: Quarter) -> Quarter
             .where(Quarter.company_id == quarter.company_id, Quarter.number == quarter.number - 1)
         )
     ).scalar_one_or_none()
-    return _to_allocations(row) if row is not None else None
+    return to_allocations(row) if row is not None else None
 
 
-async def _load_opening_state(session: AsyncSession, quarter: Quarter, seed: Any) -> CompanyState:
+async def load_opening_state(session: AsyncSession, quarter: Quarter, seed: Any) -> CompanyState:
     if quarter.number == 1:
         return CompanyState.opening(seed)
 
@@ -283,9 +283,9 @@ async def run_quarter(session: AsyncSession, quarter_id: uuid.UUID) -> QuarterRe
     allocation_row = (
         await session.execute(select(QuarterAllocation).where(QuarterAllocation.quarter_id == quarter_id))
     ).scalar_one_or_none()
-    allocations = _to_allocations(allocation_row)
+    allocations = to_allocations(allocation_row)
 
-    opening_state = await _load_opening_state(session, quarter, seed)
+    opening_state = await load_opening_state(session, quarter, seed)
 
     # Crisis (Phase 10): fires only on the scenario's own crisis_quarter. `crisis_scenario` in
     # config picks the branch when the scenario pins one; `None` means assign deterministically

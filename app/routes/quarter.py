@@ -6,7 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.models.company import Company
-from app.models.quarter import Quarter
+from app.config.loader import load_profile, load_scenario, load_seed
+from app.engines.quarter import compute_quarter
+from app.engines.state import CrisisEvent
+from app.models.quarter import Quarter, QuarterStatus
+from app.models.quarter_allocation import QuarterAllocation
 from app.models.quarter_performance import QuarterPerformance
 from app.routes.deps import get_current_user, get_quarter, get_quarter_for_write
 from app.schemas.crisis import CrisisBriefingResponse
@@ -19,8 +23,9 @@ from app.schemas.quarter import (
 )
 from app.services.auth_service import CurrentUser
 from app.services.authorization_service import require_read_access
+from app.services.company_service import assign_crisis_scenario
 from app.services.crisis_briefing_service import NotCrisisQuarterError, build_crisis_briefing
-from app.services.quarter_run_service import run_quarter
+from app.services.quarter_run_service import run_quarter, load_opening_state, to_allocations
 from app.services.report_service import QuarterNotLockedError, build_report_for_quarter
 from app.services.storage_service import (
     REPORT_BUCKET,
@@ -53,6 +58,36 @@ async def lock_quarter(
     Idempotent: `run_quarter` itself is the lock guard -- an already-locked quarter returns its
     persisted result unchanged rather than recomputing or 409ing, so calling this twice is safe.
     """
+    # Pre-flight validation: prevent locking if closing cash would be negative
+    if quarter.status != QuarterStatus.CLOSED:
+        company = await session.get(Company, quarter.company_id)
+        seed = load_seed(company.seed_name)
+        profile = load_profile(company.profile_name)
+        scenario = load_scenario(company.scenario_id)
+        
+        allocation_row = (
+            await session.execute(select(QuarterAllocation).where(QuarterAllocation.quarter_id == quarter.id))
+        ).scalar_one_or_none()
+        allocations = to_allocations(allocation_row)
+        opening_state = await load_opening_state(session, quarter, seed)
+        
+        # Check if this is a crisis quarter
+        crisis_event = None
+        if quarter.number == scenario.crisis_quarter:
+            letter = scenario.crisis_scenario or assign_crisis_scenario(company.id)
+            crisis_event = CrisisEvent(scenario=letter)
+        
+        # Compute the quarter result to check closing cash
+        result = compute_quarter(opening_state, allocations, profile, seed, crisis_event)
+        
+        if result.closing_state.cash_inr <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot lock quarter: closing cash would be ₹{result.closing_state.cash_inr:,.2f}. "
+                       f"You need to reduce your allocations to maintain positive cash balance. "
+                       f"Opening cash: ₹{opening_state.cash_inr:,.2f}"
+            )
+    
     await run_quarter(session, quarter.id)
     report = await build_report_for_quarter(session, quarter.id)
     return QuarterReportResponse.model_validate(report)

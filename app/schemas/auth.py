@@ -59,3 +59,8 @@ class AuthResponse(BaseModel):
     refresh_token: str | None = None
     user_id: uuid.UUID = Field(description="The Supabase auth user id -- becomes this user's `owner_id` on any company they create.")
     email: str
+    is_admin: bool = Field(
+        default=False,
+        description="True when this user's role is 'admin'. The frontend uses this to redirect "
+        "to the admin panel instead of the regular application on login.",
+    )

@@ -14,7 +14,7 @@ from app.models.company import Company
 from app.models.modifier import Modifier
 from app.models.quarter import Quarter, QuarterStatus
 from app.services.auth_service import CurrentUser, get_or_create_app_user, verify_jwt
-from app.services.authorization_service import require_owner, require_read_access
+from app.services.authorization_service import NotPermittedError, require_owner, require_read_access
 from app.services.run_service import require_move
 
 _bearer = HTTPBearer(auto_error=False)
@@ -68,6 +68,21 @@ async def get_current_user_optional(
     except (jwt.PyJWTError, ValueError):
         # Invalid token: treat as anonymous rather than raising auth error
         return None
+
+
+async def require_admin(
+    user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Authorization gate for admin-only endpoints.
+
+    Depends on `get_current_user` (authentication -- 401 if no valid JWT) and then
+    checks that the resolved `AppUser` carries `role='admin'` (authorization -- 403 if not).
+    The two concerns are kept separate: identity first, privilege second, matching the pattern
+    already used by `require_owner` / `require_read_access` in the authorization service.
+    """
+    if user.role != "admin":
+        raise NotPermittedError("admin role required")
+    return user
 
 
 async def get_quarter(

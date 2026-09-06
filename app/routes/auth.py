@@ -6,10 +6,14 @@ via httpx/pytest, the same way Phase 12's acceptance tests exercise the run life
 """
 
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.core.db import get_db
+from app.models.app_user import AppUser
 from app.routes.deps import NotAuthenticatedError
 from app.schemas.auth import (
     AuthResponse,
@@ -96,6 +100,7 @@ async def register(
 async def login(
     payload: LoginRequest,
     client: SupabaseAuthClient = Depends(get_supabase_auth_client),
+    session: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
     try:
         result = await client.sign_in(email=payload.email, password=payload.password)
@@ -127,7 +132,22 @@ async def login(
             raise NotAuthenticatedError(
                 exc.message or "Unable to log in. Please check your email and password, or create an account if you're new."
             ) from exc
-    return AuthResponse(**result)
+
+    # Check whether this user is an admin in the local app_users table.
+    # The role is never stored in the Supabase JWT itself (Supabase has no concept of
+    # Myelin's roles) -- we look it up from the row that get_or_create_app_user provisioned.
+    is_admin = False
+    user_id_str = result.get("user_id")
+    if user_id_str:
+        try:
+            uid = uuid.UUID(str(user_id_str))
+            app_user = await session.get(AppUser, uid)
+            if app_user is not None:
+                is_admin = app_user.role == "admin"
+        except (ValueError, TypeError):
+            pass  # Malformed UUID -- treat as non-admin, not a crash
+
+    return AuthResponse(**result, is_admin=is_admin)
 
 
 @router.post(

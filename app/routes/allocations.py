@@ -132,16 +132,32 @@ async def _upsert(
     buffer = seed.working_capital_buffer_inr
     RUPEES_PER_LAKH = Decimal(100000)
     
-    # Calculate discretionary ceiling
+    # Calculate total discretionary in rupees
+    total_discretionary_inr = total_spend * RUPEES_PER_LAKH
+    
+    # Calculate projected cash after allocations and fixed costs
+    projected_cash_after_allocations = available_cash - total_discretionary_inr - fixed_costs
+    
+    # Hard validation: cash must NEVER go negative (even ignoring buffer)
+    if projected_cash_after_allocations < 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Insufficient cash. Total allocation (₹{total_discretionary_inr:,.2f}) plus "
+                   f"fixed costs (₹{fixed_costs:,.2f}) exceeds available cash (₹{available_cash:,.2f}). "
+                   f"You cannot allocate more than your available cash. "
+                   f"Reduce allocations by at least ₹{abs(projected_cash_after_allocations):,.2f}."
+        )
+    
+    # Calculate discretionary ceiling (including buffer)
     discretionary_ceiling_lakhs = (available_cash - fixed_costs - buffer) / RUPEES_PER_LAKH
     
     if total_spend > discretionary_ceiling_lakhs:
         raise HTTPException(
             status_code=422,
-            detail=f"Total allocation (Rs {total_spend:.2f} lakhs) exceeds available budget "
-                   f"(Rs {discretionary_ceiling_lakhs:.2f} lakhs). "
-                   f"Available cash: Rs {available_cash:,.2f}, Fixed costs: Rs {fixed_costs:,.2f}, "
-                   f"Working capital buffer: Rs {buffer:,.2f}"
+            detail=f"Total allocation (₹{total_spend:.2f} lakhs) exceeds available budget "
+                   f"(₹{discretionary_ceiling_lakhs:.2f} lakhs). "
+                   f"Available cash: ₹{available_cash:,.2f}, Fixed costs: ₹{fixed_costs:,.2f}, "
+                   f"Working capital buffer: ₹{buffer:,.2f}"
         )
     
     # If validation passes, apply the actual updates

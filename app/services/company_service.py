@@ -219,11 +219,19 @@ async def create_quarter(session: AsyncSession, company: Company) -> Quarter:
             + (f" ({company.survival_detail})" if company.survival_detail else "")
         )
 
+    # Validate that the prior quarter has sufficient cash before creating the next quarter
+    opening_cash = await _opening_cash(session, company, number)
+    if opening_cash <= 0:
+        raise ValueError(
+            f"Cannot open quarter {number}: insufficient cash balance (₹{opening_cash:,.2f}). "
+            f"The previous quarter ended with zero or negative cash, preventing further progression."
+        )
+
     quarter = Quarter(
         company_id=company.id,
         number=number,
         status=QuarterStatus.IN_PROGRESS,
-        cash_balance=await _opening_cash(session, company, number),
+        cash_balance=opening_cash,
         revenue=Decimal(0),
     )
     session.add(quarter)

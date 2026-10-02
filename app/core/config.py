@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # string before validation runs, so a plain `a,b,c` -- the only thing a hosting dashboard's
     # env-var box invites you to type -- raises SettingsError and the process dies at import,
     # before a single log line. `_split_csv` accepts both that and a JSON array.
-    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000", "http://127.0.0.1:3000", "https://myelinworks.com", "https://www.myelinworks.com"]
 
     # Vercel mints a distinct origin per deployment (`<project>-<hash>-<scope>.vercel.app`), so an
     # enumerated allow-list goes stale the next time the frontend deploys and every browser call
